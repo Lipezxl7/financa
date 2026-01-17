@@ -438,7 +438,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
             Historico recente da conversa:
             ${historicoMsgs}
 
-            Usuario disse: "${txt}".
+                Usuario disse: "${txt}".
             
             Instruções:
             1. Responda em no máximo uma frase curta.
