@@ -158,12 +158,12 @@ async function tratarFinanceiro(sock, de, msg, txt) {
                    `💡 *COMANDOS DISPONÍVEIS:*\n` +
                    `➕ */ad [item] [valor]* -> Adicionar um gasto novo\n` +
                    `📜 */lista* -> Ver o que gastou\n` +
-                   `    *Pode conversar normalmente que a IA te dá dicas!*`;
+                   `🤖 *Pode conversar normalmente que a IA te dá dicas!*`;
 
         return sock.sendMessage(de, { text: analise });
     }
 
-    /
+   
 
     // Comando /ad (Adicionar Gasto)
     if (cmd.startsWith('/ad ')) {
