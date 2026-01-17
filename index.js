@@ -33,7 +33,8 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  delay
 } = require('@whiskeysockets/baileys')
 
 const axios = require('axios')
@@ -42,12 +43,18 @@ const P = require('pino')
 const path = require('path')
 
 const authFolder = './auth'
-const dbPath = './banco.json' // Arquivo onde ficam os dados
+const dbPath = './banco.json' 
 
-// Função para ler o banco de dados
+// Função para Simular Digitação (Delay Humano)
+async function digitar(sock, de, segundos = 2) {
+    await sock.sendPresenceUpdate('composing', de);
+    await delay(segundos * 1000); // Espera X segundos
+}
+
+// Função para ler o banco
 function lerBanco() {
     if (!fs.existsSync(dbPath)) {
-        fs.writeFileSync(dbPath, JSON.stringify({})); // Cria se não existir
+        fs.writeFileSync(dbPath, JSON.stringify({})); 
     }
     try {
         return JSON.parse(fs.readFileSync(dbPath));
@@ -56,12 +63,28 @@ function lerBanco() {
     }
 }
 
-// Função para salvar no banco
 function salvarBanco(dados) {
     fs.writeFileSync(dbPath, JSON.stringify(dados, null, 2));
 }
 
-// Função auxiliar para limpar números (ex: "R$ 1.200,50" vira 1200.50)
+// Função para extrair e somar todos os números de um texto
+// Ex: "300 luz e 200 agua" -> Retorna 500
+function somarValoresTexto(texto) {
+    // Procura todos os números (com ou sem vírgula/ponto)
+    const numeros = texto.match(/(\d+[.,]?\d*)/g);
+    if (!numeros) return 0;
+
+    let total = 0;
+    numeros.forEach(num => {
+        // Troca virgula por ponto para o JS entender
+        let valorLimpo = parseFloat(num.replace(',', '.'));
+        if (!isNaN(valorLimpo)) {
+            total += valorLimpo;
+        }
+    });
+    return total;
+}
+
 function limparNumero(texto) {
     let num = texto.replace(/[^\d,]/g, '').replace(',', '.');
     return parseFloat(num) || 0;
@@ -70,17 +93,15 @@ function limparNumero(texto) {
 async function tratarFinanceiro(sock, de, msg, txt) {
     const db = lerBanco();
     
-    // Se o usuário não existe, cria o cadastro inicial
     if (!db[de]) {
         db[de] = {
-            etapa: 0, // 0 = Novo, 1 = Salario, 2 = Fixos, 3 = Besteira, 4 = Guarda, 5 = Concluido
+            etapa: 0, // 0=Novo, 1=Salario, 2=Fixos, 3=Guarda, 4=Concluido
             perfil: {
                 salario: 0,
                 fixos: 0,
-                besteira: 0,
                 poupanca_atual: 0
             },
-            gastos: [] // Lista de gastos
+            gastos: [] 
         };
         salvarBanco(db);
     }
@@ -90,146 +111,162 @@ async function tratarFinanceiro(sock, de, msg, txt) {
 
     // --- LÓGICA DO QUESTIONÁRIO ---
 
-    // Etapa 0: Boas vindas
+    // Etapa 0: Boas vindas + Pergunta Salário
     if (usuario.etapa === 0) {
         usuario.etapa = 1;
         salvarBanco(db);
-        return sock.sendMessage(de, { text: 
-            "Olá! Sou seu Assistente Financeiro IA 🤖💰.\n" +
-            "Para começar e eu te ajudar de verdade, preciso te conhecer.\n\n" +
-            "1️⃣ Qual é a sua renda mensal (Salário)?\n(Digite apenas o valor. Ex: 2500)" 
-        });
+
+        await digitar(sock, de, 2); // Finge que digita por 2s
+
+        const textoBoasVindas = "Olá! Sou seu Assistente Financeiro IA 🤖💰.\n" +
+            "Para eu te ajudar, preciso entender sua vida financeira.\n\n" +
+            "1️⃣ *Qual é a sua renda mensal (Salário)?*\n(Digite apenas o valor. Ex: 2500)";
+
+        // Tenta mandar com imagem se existir 'saudacao.jpg'
+        const caminhoFoto = path.join(__dirname, 'saudacao.jpg');
+        if (fs.existsSync(caminhoFoto)) {
+            return sock.sendMessage(de, { image: fs.readFileSync(caminhoFoto), caption: textoBoasVindas });
+        } else {
+            return sock.sendMessage(de, { text: textoBoasVindas });
+        }
     }
 
     // Etapa 1: Recebe Salário -> Pergunta Fixos
     if (usuario.etapa === 1) {
         const valor = limparNumero(txt);
-        if (valor <= 0) return sock.sendMessage(de, { text: "Por favor, digite um valor válido." });
+        if (valor <= 0) {
+            await digitar(sock, de, 1);
+            return sock.sendMessage(de, { text: "⚠️ Por favor, digite um valor válido." });
+        }
         
         usuario.perfil.salario = valor;
         usuario.etapa = 2;
         salvarBanco(db);
-        return sock.sendMessage(de, { text: "Certo! 📝\n\n2️⃣ Quanto você gasta com contas FIXAS todo mês? (Luz, água, aluguel, internet...)\nSome tudo e me diga o valor." });
+
+        await digitar(sock, de, 2);
+        return sock.sendMessage(de, { text: "Certo! 📝\n\n2️⃣ *Quais são seus gastos FIXOS mensais?*\n(Pode escrever tudo junto, eu somo pra você!)\n\nExemplo: _300 de agua 250 luz 800 aluguel_" });
     }
 
-    // Etapa 2: Recebe Fixos -> Pergunta Besteiras
+    // Etapa 2: Recebe Fixos (Soma Inteligente) -> Pergunta Poupança
     if (usuario.etapa === 2) {
-        const valor = limparNumero(txt);
-        usuario.perfil.fixos = valor;
+        const totalFixos = somarValoresTexto(txt);
+        
+        if (totalFixos <= 0) {
+            await digitar(sock, de, 1);
+            return sock.sendMessage(de, { text: "Não identifiquei nenhum valor. Tente digitar números, tipo: '500 aluguel'" });
+        }
+
+        usuario.perfil.fixos = totalFixos;
         usuario.etapa = 3;
         salvarBanco(db);
-        return sock.sendMessage(de, { text: "Entendido.\n\n3️⃣ E com 'besteiras' ou lazer? (Ifood, Uber desnecessário, comprinhas...)\nChute uma média mensal:" });
+
+        await digitar(sock, de, 2);
+        return sock.sendMessage(de, { text: `Entendi, seus fixos somam *R$ ${totalFixos.toFixed(2)}*.\n\n3️⃣ *Você já guarda dinheiro mensalmente?*\nSe sim, digite quanto. Se não, digite 0.` });
     }
 
-    // Etapa 3: Recebe Besteiras -> Pergunta Poupança
+    // Etapa 3: Recebe Poupança -> Finaliza e Analisa
     if (usuario.etapa === 3) {
-        const valor = limparNumero(txt);
-        usuario.perfil.besteira = valor;
-        usuario.etapa = 4;
-        salvarBanco(db);
-        return sock.sendMessage(de, { text: "Última pergunta do cadastro:\n\n4️⃣ Você já guarda dinheiro mensalmente? Se sim, quanto?\n(Se não guarda, digite 0)" });
-    }
-
-    // Etapa 4: Finaliza e Calcula
-    if (usuario.etapa === 4) {
-        const valor = limparNumero(txt);
-        usuario.perfil.poupanca_atual = valor;
-        usuario.etapa = 5; // Cadastro finalizado
+        const valorPoupanca = limparNumero(txt);
+        usuario.perfil.poupanca_atual = valorPoupanca;
+        usuario.etapa = 4; // Fim do cadastro
         salvarBanco(db);
 
-        // CÁLCULO FINANCEIRO
-        const totalGastos = usuario.perfil.fixos + usuario.perfil.besteira;
-        const sobraReal = usuario.perfil.salario - totalGastos;
-        const meta20 = usuario.perfil.salario * 0.20; // 20% do salário
+        await digitar(sock, de, 3); // Demora um pouco mais pra "pensar"
+
+        // CÁLCULOS
+        const meta20 = usuario.perfil.salario * 0.20; // Meta de 20%
+        const sobraReal = usuario.perfil.salario - usuario.perfil.fixos;
         
         let analise = `✅ *CADASTRO CONCLUÍDO!*\n\n` +
-                      `💵 Renda: R$ ${usuario.perfil.salario.toFixed(2)}\n` +
-                      `📉 Gastos Totais: R$ ${totalGastos.toFixed(2)}\n` +
-                      `💰 *Sobra Teórica: R$ ${sobraReal.toFixed(2)}*\n\n` +
-                      `🎯 *META DE OURO (20%):* Você deveria guardar pelo menos *R$ ${meta20.toFixed(2)}* todo mês.\n\n`;
+                      `💵 Salário: R$ ${usuario.perfil.salario.toFixed(2)}\n` +
+                      `📉 Gastos Fixos: R$ ${usuario.perfil.fixos.toFixed(2)}\n` +
+                      `💰 Sobra (Antes de gastar com besteira): R$ ${sobraReal.toFixed(2)}\n\n`;
 
-        if (sobraReal < meta20) {
-            analise += "⚠️ *Alerta:* Seus gastos estão altos! Você não está conseguindo guardar os 20% ideais. Vamos precisar cortar as 'besteiras' ou economizar nos fixos.";
+        // Lógica dos 20%
+        if (valorPoupanca >= meta20) {
+            analise += `🏆 *PARABÉNS!* Você guarda R$ ${valorPoupanca.toFixed(2)}, que é mais de 20% do seu salário (R$ ${meta20.toFixed(2)}). Continue assim, seu futuro agradece! 🚀`;
         } else {
-            analise += "🏆 *Parabéns!* Suas finanças parecem saudáveis. Mantenha o foco!";
+            const diferenca = meta20 - valorPoupanca;
+            analise += `⚠️ *ATENÇÃO AOS 20%*\n` +
+                       `Sua meta ideal seria guardar *R$ ${meta20.toFixed(2)}* por mês.\n` +
+                       `Atualmente você guarda R$ ${valorPoupanca.toFixed(2)}.\n` +
+                       `Faltam *R$ ${diferenca.toFixed(2)}* para atingir a meta saudável. Tente cortar gastos variáveis!`;
         }
 
         analise += `\n\n-----------------------------\n` +
-                   `💡 *COMANDOS DISPONÍVEIS:*\n` +
-                   `➕ */ad [item] [valor]* -> Adicionar um gasto novo\n` +
-                   `📜 */lista* -> Ver o que gastou\n` +
-                   `🤖 *Pode conversar normalmente que a IA te dá dicas!*`;
+                   `💡 *COMANDOS:*\n` +
+                   `➕ */ad [item] [valor]* -> Adicionar gasto\n` +
+                   `📜 */lista* -> Ver gastos\n` +
+                   `🔄 */reset* -> Recomeçar cadastro\n` +
+                   `🤖 *Pode conversar comigo que te ajudo a economizar!*`;
 
         return sock.sendMessage(de, { text: analise });
     }
 
-   
+    // --- COMANDOS PARA USUÁRIOS CADASTRADOS (ETAPA 4) ---
 
-    // Comando /ad (Adicionar Gasto)
+    // Comando /ad
     if (cmd.startsWith('/ad ')) {
-        
         const partes = txt.slice(4).trim().split(' ');
-        const valorString = partes.pop(); // Pega o último item (o valor)
-        const descricao = partes.join(' '); // O resto é a descrição
+        const valorString = partes.pop();
+        const descricao = partes.join(' ');
         const valor = limparNumero(valorString);
 
         if (!descricao || valor <= 0) {
-            return sock.sendMessage(de, { text: "Formato errado\nUse: */ad Nome do Gasto Valor*\nEx: /ad Ifood 35.00" });
+            await digitar(sock, de, 1);
+            return sock.sendMessage(de, { text: "⚠️ Use: */ad Pizza 50*" });
         }
 
         const dataHoje = new Date().toLocaleDateString('pt-BR');
-        
-        usuario.gastos.push({
-            data: dataHoje,
-            desc: descricao,
-            valor: valor
-        });
+        usuario.gastos.push({ data: dataHoje, desc: descricao, valor: valor });
         salvarBanco(db);
 
+        await digitar(sock, de, 1);
         return sock.sendMessage(de, { text: `✅ Gasto anotado: *${descricao}* (R$ ${valor.toFixed(2)})` });
     }
 
+    // Comando /lista
     if (cmd === '/lista') {
-        if (usuario.gastos.length === 0) {
-            return sock.sendMessage(de, { text: "Você ainda não anotou nenhum gasto." });
-        }
+        if (usuario.gastos.length === 0) return sock.sendMessage(de, { text: "Nenhum gasto anotado." });
 
-        let relatorio = "*📝 SEUS GASTOS RECENTES:*\n\n";
+        let relatorio = "*📝 SEUS GASTOS:*\n\n";
         let total = 0;
-
-        usuario.gastos.forEach((g, i) => {
+        usuario.gastos.forEach(g => {
             relatorio += `📅 ${g.data} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`;
             total += g.valor;
         });
-
-        relatorio += `\n💸 *TOTAL GASTO:* R$ ${total.toFixed(2)}`;
+        relatorio += `\n💸 *TOTAL:* R$ ${total.toFixed(2)}`;
+        
+        await digitar(sock, de, 2);
         return sock.sendMessage(de, { text: relatorio });
     }
+
     if (cmd === '/reset') {
         delete db[de];
         salvarBanco(db);
-        return sock.sendMessage(de, { text: "Seus dados foram apagados. Mande um 'oi' para começar de novo." });
+        return sock.sendMessage(de, { text: "Dados apagados. Mande um 'oi' para recomeçar." });
     }
-    await sock.sendPresenceUpdate('composing', de);
+
+    // --- IA COM DELAY ---
+    
+    await digitar(sock, de, 3); // IA demora 3 segundos fingindo pensar
 
     const contextoFinanceiro = `
-        Você é um consultor financeiro especialista e rigoroso.
-        O perfil do usuário é:
-        - Ganha: R$ ${usuario.perfil.salario}
-        - Custos Fixos: R$ ${usuario.perfil.fixos}
-        - Gasta com besteira: R$ ${usuario.perfil.besteira}
-        - Guarda atualmente: R$ ${usuario.perfil.poupanca_atual}
+        Você é um consultor financeiro.
+        Dados do usuário:
+        - Salário: R$ ${usuario.perfil.salario}
+        - Fixos: R$ ${usuario.perfil.fixos}
+        - Guarda: R$ ${usuario.perfil.poupanca_atual}
         
         O usuário disse: "${txt}"
-        
-        Dê um conselho curto e direto baseado nos números dele. Se ele estiver gastando muito com besteira, dê uma bronca leve.
+        Responda de forma curta e ajude ele a bater a meta de 20% de economia.
     `;
 
     try {
         const { data } = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(contextoFinanceiro)}`);
-        return sock.sendMessage(de, { text: ` *Consultor:* ${data}` });
+        return sock.sendMessage(de, { text: `🤖 ${data}` });
     } catch (e) {
-        return sock.sendMessage(de, { text: "A IA está dormindo um pouco, tente já já." });
+        return sock.sendMessage(de, { text: "A IA está descansando..." });
     }
 }
 
@@ -257,11 +294,7 @@ async function start() {
 
     if (connection === "close") {
       const reason = lastDisconnect?.error?.output?.statusCode;
-      if (reason !== DisconnectReason.loggedOut) {
-        start();
-      } else {
-        console.log("Sessão expirada.");
-      }
+      if (reason !== DisconnectReason.loggedOut) start();
     } else if (connection === "open") {
       console.log("BOT CONECTADO 🚀");
       qrCodeImagem = null;
