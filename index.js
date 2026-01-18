@@ -129,7 +129,8 @@ async function tratarFinanceiro(sock, de, msg, txt) {
         db[de] = {
             etapa: 0,
             perfil: { nome: '', salario: 0, fixos: 0, futeis: 0, poupanca_atual: 0 },
-            gastos: []
+            gastos: [],
+            conversas: [] 
         }
         salvarBanco(db)
     }
@@ -139,6 +140,16 @@ async function tratarFinanceiro(sock, de, msg, txt) {
     if (usuario.perfil.futeis === undefined) usuario.perfil.futeis = 0;
     if (usuario.perfil.nome === undefined) usuario.perfil.nome = 'Cliente'; 
     if (!Array.isArray(usuario.gastos)) usuario.gastos = [];
+    if (!Array.isArray(usuario.conversas)) usuario.conversas = []; 
+    
+    // Salva msg do usuario
+    usuario.conversas.push({ role: 'user', content: txt, time: dataHoraAtual() });
+    
+    // Limita historico a 50 msgs pra nao pesar
+    if (usuario.conversas.length > 50) {
+        usuario.conversas = usuario.conversas.slice(-50);
+    }
+    
     salvarBanco(db);
 
     const cmd = txt.trim().toLowerCase()
@@ -349,7 +360,12 @@ async function tratarFinanceiro(sock, de, msg, txt) {
                 const horaCurta = hora.trim();
                 const idReal = usuario.gastos.indexOf(g) + 1;
 
-                relatorio += `${idReal}.    ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
+                if ((idReal - 1) % 10 === 0) {
+                    relatorio += `${idReal}. ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
+                } else {
+                    relatorio += `   ▪️ ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
+                }
+                
                 totalGeral += g.valor
             })
         }
@@ -407,6 +423,8 @@ async function tratarFinanceiro(sock, de, msg, txt) {
     if (usuario.etapa === 6) {
         await digitar(sock, de, 2)
 
+        const historicoMsgs = usuario.conversas.slice(-10).map(c => `${c.role}: ${c.content}`).join('\n');
+
         const contexto = `
             Aja como um consultor financeiro paciente e extremamente objetivo.
             O nome do cliente é ${usuario.perfil.nome}, chame ele assim sempre.
@@ -417,6 +435,9 @@ async function tratarFinanceiro(sock, de, msg, txt) {
             - Fúteis ${usuario.perfil.futeis}
             - Guarda ${usuario.perfil.poupanca_atual}
             
+            Historico recente da conversa:
+            ${historicoMsgs}
+
             Usuario disse: "${txt}".
             
             Instruções:
@@ -428,6 +449,11 @@ async function tratarFinanceiro(sock, de, msg, txt) {
 
         try {
             const { data } = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(contexto)}`)
+            
+            // Salva resposta do bot
+            usuario.conversas.push({ role: 'assistant', content: data, time: dataHoraAtual() });
+            salvarBanco(db);
+
             return sock.sendMessage(de, { text: `*Consultor*: ${data}` })
         } catch (e) {
             return 0 
