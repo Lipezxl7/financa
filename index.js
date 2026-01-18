@@ -1,317 +1,488 @@
-const express = require('express');
-const app = express();
-const qrcode = require('qrcode');
-let qrCodeImagem = null;
+import http from 'http'
+global.qrCodeSite = null;
 
-// --- CONFIGURAÇÃO DO SITE 24H ---
-app.get("/", (request, response) => {
-  const ping = new Date();
-  ping.setHours(ping.getHours() - 3);
-  console.log(`Ping recebido às ${ping.getUTCHours()}:${ping.getUTCMinutes()}:${ping.getUTCSeconds()}`);
-  
-  if (qrCodeImagem) {
-      response.send(`
-        <html>
-          <meta http-equiv="refresh" content="5">
-          <body style="display:flex; justify-content:center; align-items:center; background:#121212; height:100vh;">
-            <div style="text-align:center; color:white; font-family:sans-serif;">
-                <h1>Escaneie para conectar</h1>
-                <img src="${qrCodeImagem}" style="border:5px solid white; border-radius:10px;">
-                <p>Atualizando automaticamente...</p>
-            </div>
-          </body>
-        </html>
-      `);
-  } else {
-      response.send('<h1 style="text-align:center; margin-top:20%; font-family:sans-serif;">Bot Financeiro Online! 💰<br>Aguarde ou já conectado.</h1>');
-  }
+const PORT = process.env.PORT || 8080
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+
+    if (global.qrCodeSite) {
+        
+        const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(global.qrCodeSite)}`;
+        
+        const html = `
+            <html>
+                <head>
+                    <meta http-equiv="refresh" content="5">
+                    <title>Jamal Bot - Conectar</title>
+                    <style>
+                        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; flex-direction: column; }
+                        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+                        h1 { color: #333; margin-bottom: 10px; }
+                        p { color: #666; }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>Bot Financeiro</h1>
+                        <p>Escaneie para conectar:</p>
+                        <img src="${qrImage}" alt="QR Code WhatsApp" />
+                        <p><small>Atualiza a cada 5 segundos...</small></p>
+                    </div>
+                </body>
+            </html>
+        `;
+        res.end(html);
+    } else {
+        res.end(`
+            <html>
+                <head><meta http-equiv="refresh" content="2"></head>
+                <body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <h2> Aguardando geração do QR Code...<br>Ou o Bot já está conectado!</h2>
+                </body>
+            </html>
+        `);
+    }
 });
-app.listen(process.env.PORT || 5000);
 
-// --- INÍCIO DO BOT ---
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  delay
-} = require('@whiskeysockets/baileys')
+server.listen(PORT, () => {
+    console.log(`\n Servidor HTTP com QR Code rodando na porta ${PORT}`);
+});
 
-const axios = require('axios')
-const fs = require('fs')
-const P = require('pino')
-const path = require('path')
+import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { createRequire } from 'module'
+import P from 'pino'
 
-const authFolder = './auth'
-const dbPath = './banco.json' 
-
-// Função para Simular Digitação (Delay Humano)
-async function digitar(sock, de, segundos = 2) {
-    await sock.sendPresenceUpdate('composing', de);
-    await delay(segundos * 1000); // Espera X segundos
+if (!globalThis.crypto) {
+    globalThis.crypto = crypto.webcrypto
 }
 
-// Função para ler o banco
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    fetchLatestBaileysVersion, 
+    delay 
+} = await import('@whiskeysockets/baileys')
+
+const { default: axios } = await import('axios')
+const require = createRequire(import.meta.url)
+const qrcodeTerminal = require('qrcode-terminal')
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+const authFolder = './auth_local'
+const dbPath = './banco.json'
+
+async function digitar(sock, de, segundos = 1) {
+    await sock.sendPresenceUpdate('composing', de)
+    await delay(segundos * 1000)
+}
+
+function dataHoraAtual() {
+    const now = new Date();
+    const dataBrasil = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+
+    const dia = String(dataBrasil.getDate()).padStart(2, '0');
+    const mes = String(dataBrasil.getMonth() + 1).padStart(2, '0');
+    const ano = dataBrasil.getFullYear();
+    
+    const hora = String(dataBrasil.getHours()).padStart(2, '0');
+    const min = String(dataBrasil.getMinutes()).padStart(2, '0');
+
+    return `${dia}/${mes}/${ano} ${hora}:${min}`;
+}
+
 function lerBanco() {
     if (!fs.existsSync(dbPath)) {
-        fs.writeFileSync(dbPath, JSON.stringify({})); 
+        fs.writeFileSync(dbPath, JSON.stringify({}))
     }
     try {
-        return JSON.parse(fs.readFileSync(dbPath));
+        return JSON.parse(fs.readFileSync(dbPath))
     } catch {
-        return {};
+        return {}
     }
 }
 
 function salvarBanco(dados) {
-    fs.writeFileSync(dbPath, JSON.stringify(dados, null, 2));
+    fs.writeFileSync(dbPath, JSON.stringify(dados, null, 2))
 }
 
-// Função para extrair e somar todos os números de um texto
-// Ex: "300 luz e 200 agua" -> Retorna 500
 function somarValoresTexto(texto) {
-    // Procura todos os números (com ou sem vírgula/ponto)
-    const numeros = texto.match(/(\d+[.,]?\d*)/g);
-    if (!numeros) return 0;
-
-    let total = 0;
+    const numeros = texto.match(/(\d+[.,]?\d*)/g)
+    if (!numeros) return 0
+    let total = 0
     numeros.forEach(num => {
-        // Troca virgula por ponto para o JS entender
-        let valorLimpo = parseFloat(num.replace(',', '.'));
-        if (!isNaN(valorLimpo)) {
-            total += valorLimpo;
-        }
-    });
-    return total;
+        let valorLimpo = parseFloat(num.replace(',', '.'))
+        if (!isNaN(valorLimpo)) total += valorLimpo
+    })
+    return total
 }
 
 function limparNumero(texto) {
-    let num = texto.replace(/[^\d,]/g, '').replace(',', '.');
-    return parseFloat(num) || 0;
+    let num = texto.replace(/[^\d,]/g, '').replace(',', '.')
+    return parseFloat(num) || 0
 }
 
 async function tratarFinanceiro(sock, de, msg, txt) {
-    const db = lerBanco();
-    
+    const db = lerBanco()
+
     if (!db[de]) {
         db[de] = {
-            etapa: 0, // 0=Novo, 1=Salario, 2=Fixos, 3=Guarda, 4=Concluido
-            perfil: {
-                salario: 0,
-                fixos: 0,
-                poupanca_atual: 0
-            },
-            gastos: [] 
-        };
-        salvarBanco(db);
+            etapa: 0,
+            perfil: { nome: '', salario: 0, fixos: 0, futeis: 0, poupanca_atual: 0 },
+            gastos: []
+        }
+        salvarBanco(db)
     }
 
-    const usuario = db[de];
-    const cmd = txt.trim().toLowerCase();
+    const usuario = db[de]
 
-    // --- LÓGICA DO QUESTIONÁRIO ---
+    if (usuario.perfil.futeis === undefined) usuario.perfil.futeis = 0;
+    if (usuario.perfil.nome === undefined) usuario.perfil.nome = 'Cliente'; 
+    if (!Array.isArray(usuario.gastos)) usuario.gastos = [];
+    salvarBanco(db);
 
-    // Etapa 0: Boas vindas + Pergunta Salário
+    const cmd = txt.trim().toLowerCase()
+
     if (usuario.etapa === 0) {
-        usuario.etapa = 1;
-        salvarBanco(db);
+        usuario.etapa = 1
+        salvarBanco(db)
+        await digitar(sock, de, 2)
 
-        await digitar(sock, de, 2); // Finge que digita por 2s
-
-        const textoBoasVindas = "Olá! Sou seu Assistente Financeiro IA 🤖💰.\n" +
-            "Para eu te ajudar, preciso entender sua vida financeira.\n\n" +
-            "1️⃣ *Qual é a sua renda mensal (Salário)?*\n(Digite apenas o valor. Ex: 2500)";
-
-        // Tenta mandar com imagem se existir 'saudacao.jpg'
-        const caminhoFoto = path.join(__dirname, 'saudacao.jpg');
+        const texto = "Olá! Sou seu Consultor Financeiro.\nVamos alinhar suas contas?\n\nAntes de tudo: *Como você quer ser chamado?*"
+        
+        const caminhoFoto = path.join(__dirname, 'saudacao.jpg')
         if (fs.existsSync(caminhoFoto)) {
-            return sock.sendMessage(de, { image: fs.readFileSync(caminhoFoto), caption: textoBoasVindas });
+            return sock.sendMessage(de, { image: fs.readFileSync(caminhoFoto), caption: texto })
         } else {
-            return sock.sendMessage(de, { text: textoBoasVindas });
+            return sock.sendMessage(de, { text: texto })
         }
     }
 
-    // Etapa 1: Recebe Salário -> Pergunta Fixos
     if (usuario.etapa === 1) {
-        const valor = limparNumero(txt);
-        if (valor <= 0) {
-            await digitar(sock, de, 1);
-            return sock.sendMessage(de, { text: "⚠️ Por favor, digite um valor válido." });
-        }
-        
-        usuario.perfil.salario = valor;
-        usuario.etapa = 2;
-        salvarBanco(db);
+        const nomeEscolhido = txt.trim();
+        if (nomeEscolhido.length < 2) return sock.sendMessage(de, { text: "Nome muito curto. Como quer ser chamado?" });
 
-        await digitar(sock, de, 2);
-        return sock.sendMessage(de, { text: "Certo! 📝\n\n2️⃣ *Quais são seus gastos FIXOS mensais?*\n(Pode escrever tudo junto, eu somo pra você!)\n\nExemplo: _300 de agua 250 luz 800 aluguel_" });
-    }
-
-    // Etapa 2: Recebe Fixos (Soma Inteligente) -> Pergunta Poupança
-    if (usuario.etapa === 2) {
-        const totalFixos = somarValoresTexto(txt);
-        
-        if (totalFixos <= 0) {
-            await digitar(sock, de, 1);
-            return sock.sendMessage(de, { text: "Não identifiquei nenhum valor. Tente digitar números, tipo: '500 aluguel'" });
-        }
-
-        usuario.perfil.fixos = totalFixos;
-        usuario.etapa = 3;
-        salvarBanco(db);
-
-        await digitar(sock, de, 2);
-        return sock.sendMessage(de, { text: `Entendi, seus fixos somam *R$ ${totalFixos.toFixed(2)}*.\n\n3️⃣ *Você já guarda dinheiro mensalmente?*\nSe sim, digite quanto. Se não, digite 0.` });
-    }
-
-    // Etapa 3: Recebe Poupança -> Finaliza e Analisa
-    if (usuario.etapa === 3) {
-        const valorPoupanca = limparNumero(txt);
-        usuario.perfil.poupanca_atual = valorPoupanca;
-        usuario.etapa = 4; // Fim do cadastro
-        salvarBanco(db);
-
-        await digitar(sock, de, 3); // Demora um pouco mais pra "pensar"
-
-        // CÁLCULOS
-        const meta20 = usuario.perfil.salario * 0.20; // Meta de 20%
-        const sobraReal = usuario.perfil.salario - usuario.perfil.fixos;
-        
-        let analise = `✅ *CADASTRO CONCLUÍDO!*\n\n` +
-                      `💵 Salário: R$ ${usuario.perfil.salario.toFixed(2)}\n` +
-                      `📉 Gastos Fixos: R$ ${usuario.perfil.fixos.toFixed(2)}\n` +
-                      `💰 Sobra (Antes de gastar com besteira): R$ ${sobraReal.toFixed(2)}\n\n`;
-
-        // Lógica dos 20%
-        if (valorPoupanca >= meta20) {
-            analise += `🏆 *PARABÉNS!* Você guarda R$ ${valorPoupanca.toFixed(2)}, que é mais de 20% do seu salário (R$ ${meta20.toFixed(2)}). Continue assim, seu futuro agradece! 🚀`;
-        } else {
-            const diferenca = meta20 - valorPoupanca;
-            analise += `⚠️ *ATENÇÃO AOS 20%*\n` +
-                       `Sua meta ideal seria guardar *R$ ${meta20.toFixed(2)}* por mês.\n` +
-                       `Atualmente você guarda R$ ${valorPoupanca.toFixed(2)}.\n` +
-                       `Faltam *R$ ${diferenca.toFixed(2)}* para atingir a meta saudável. Tente cortar gastos variáveis!`;
-        }
-
-        analise += `\n\n-----------------------------\n` +
-                   `💡 *COMANDOS:*\n` +
-                   `➕ */ad [item] [valor]* -> Adicionar gasto\n` +
-                   `📜 */lista* -> Ver gastos\n` +
-                   `🔄 */reset* -> Recomeçar cadastro\n` +
-                   `🤖 *Pode conversar comigo que te ajudo a economizar!*`;
-
-        return sock.sendMessage(de, { text: analise });
-    }
-
-    // --- COMANDOS PARA USUÁRIOS CADASTRADOS (ETAPA 4) ---
-
-    // Comando /ad
-    if (cmd.startsWith('/ad ')) {
-        const partes = txt.slice(4).trim().split(' ');
-        const valorString = partes.pop();
-        const descricao = partes.join(' ');
-        const valor = limparNumero(valorString);
-
-        if (!descricao || valor <= 0) {
-            await digitar(sock, de, 1);
-            return sock.sendMessage(de, { text: "⚠️ Use: */ad Pizza 50*" });
-        }
-
-        const dataHoje = new Date().toLocaleDateString('pt-BR');
-        usuario.gastos.push({ data: dataHoje, desc: descricao, valor: valor });
+        usuario.perfil.nome = nomeEscolhido;
+        usuario.etapa = 2; 
         salvarBanco(db);
 
         await digitar(sock, de, 1);
-        return sock.sendMessage(de, { text: `✅ Gasto anotado: *${descricao}* (R$ ${valor.toFixed(2)})` });
+        return sock.sendMessage(de, { text: `Prazer, *${nomeEscolhido}*! 👊🏿\n\n1️⃣ Agora sim: *Qual é sua renda mensal (Salário)?*` });
     }
 
-    // Comando /lista
+    if (usuario.etapa === 2) {
+        const valor = limparNumero(txt)
+        if (valor <= 0) return sock.sendMessage(de, { text: "Por favor, digite um valor válido." })
+        
+        usuario.perfil.salario = valor
+        usuario.etapa = 3
+        salvarBanco(db)
+        
+        await digitar(sock, de, 1)
+        return sock.sendMessage(de, { text: "2️⃣ *Agora os Gastos Necessarios (Aluguel, Luz, Net...)*\n\nVocê pode mandar tudo somado ou ir mandando um por um.\n\n_Digite o valor ou mande 'FIM' quando terminar._" })
+    }
+
+    if (usuario.etapa === 3) {
+        if (['fim', 'ok', 'pronto', 'acabei', 'so', 'só'].includes(cmd)) {
+            usuario.etapa = 4
+            salvarBanco(db)
+
+            await digitar(sock, de, 1)
+            await sock.sendMessage(de, { text: `Fechado em R$ ${usuario.perfil.fixos.toFixed(2)} de fixos.` })
+            
+            await digitar(sock, de, 1)
+            return sock.sendMessage(de, { text: `3️⃣ *Quanto você gasta com coisas FÚTEIS?*\n(Lazer)\n\n_Pode somar ou mandar picado. Digite 'FIM' para acabar._` })
+        }
+
+        const valorAdicionado = somarValoresTexto(txt)
+        
+        if (valorAdicionado > 0) {
+            usuario.perfil.fixos += valorAdicionado
+            salvarBanco(db)
+            return sock.sendMessage(de, { text: `Necessario: R$ ${valorAdicionado.toFixed(2)}.\n*Total Fixos:* R$ ${usuario.perfil.fixos.toFixed(2)}\n\n_Mande mais ou 'FIM'._` })
+        } else {
+            return sock.sendMessage(de, { text: "Não entendi. Digite o valor ou 'FIM' para avançar." })
+        }
+    }
+
+    if (usuario.etapa === 4) {
+        if (['fim', 'ok', 'pronto', 'acabei', 'so', 'só'].includes(cmd)) {
+            usuario.etapa = 5
+            salvarBanco(db)
+
+            await digitar(sock, de, 1)
+            await sock.sendMessage(de, { text: `Gastos Fúteis fechados em R$ ${usuario.perfil.futeis.toFixed(2)}.` })
+            
+            await digitar(sock, de, 1)
+            return sock.sendMessage(de, { text: `4️⃣ *Quanto você guarda/investe por mês?* (Digite 0 se nada)` })
+        }
+
+        const valorAdicionado = somarValoresTexto(txt)
+        
+        if (valorAdicionado > 0) {
+            usuario.perfil.futeis += valorAdicionado
+            salvarBanco(db)
+            return sock.sendMessage(de, { text: `Fútil: R$ ${valorAdicionado.toFixed(2)}.\n*Total Fúteis:* R$ ${usuario.perfil.futeis.toFixed(2)}\n\n_Mande mais ou 'FIM'._` })
+        } else {
+            return sock.sendMessage(de, { text: "Não entendi. Digite o valor ou 'FIM' para avançar." })
+        }
+    }
+
+    if (usuario.etapa === 5) {
+        const guardado = limparNumero(txt)
+        usuario.perfil.poupanca_atual = guardado
+        usuario.etapa = 6 
+        salvarBanco(db)
+
+        const salario = usuario.perfil.salario
+        const fixos = usuario.perfil.fixos
+        const futeis = usuario.perfil.futeis
+        const sobraReal = salario - fixos - futeis - guardado 
+        const meta = salario * 0.20
+        const nome = usuario.perfil.nome
+        //tabela
+        const potencialTotal = guardado + sobraReal;
+
+        const resumo = `*TABELA:*\n\n` +
+                       `*Salario*: R$ ${salario.toFixed(2)}\n` +
+                       `*Necessario*: R$ ${fixos.toFixed(2)}\n` +
+                       `*Futeis*: R$ ${futeis.toFixed(2)}\n` +
+                       `*Guardado*: R$ ${guardado.toFixed(2)}\n` +
+                       `*Sobra no Bolso*: R$ ${sobraReal.toFixed(2)}\n\n` +
+                       `*Meta ideal* (20%): R$ ${meta.toFixed(2)}`;
+
+        let caminhoImagem = ""
+        let veredito = ""
+
+        if (potencialTotal >= meta) {
+            caminhoImagem = path.join(__dirname, 'bom.jpg');
+            
+            if (guardado >= meta) {
+                veredito = `Boa ${nome}, você bateu a meta! 🏆\n\n${resumo}\n\nContinue investindo assim!`;
+            } else {
+                const faltaInvestir = meta - guardado;
+                veredito = `Boa ${nome},\n\n Mas para de ser Burro ce tem (R$ ${sobraReal.toFixed(2)}) Parado na Conta\n\nInvista pelo menos R$ ${faltaInvestir.toFixed(2)} Pra tu ser o Proximo Elomusk Negro\n\n${resumo}`;
+            }
+
+        } else {
+            const falta = meta - potencialTotal;
+            caminhoImagem = path.join(__dirname, 'ruim.jpg');
+            veredito = `Não Sai do clt 📉\n\n${resumo}\n\n*Nem investindo a sobra você bate a meta. Faltam R$ ${falta.toFixed(2)}.*`;
+        }
+
+        await digitar(sock, de, 2)
+
+        if (fs.existsSync(caminhoImagem)) {
+            await sock.sendMessage(de, { image: fs.readFileSync(caminhoImagem), caption: veredito })
+        } else {
+            await sock.sendMessage(de, { text: veredito })
+        }
+        
+        await delay(1000)
+        return sock.sendMessage(de, { text: `Pronto, ${nome}! \n\nUse */ajuda* para ver os comandos`})
+    }
+    //menu 
+    if (cmd === '/ajuda' || cmd === '/help') {
+        const msgAjuda = `*COMANDOS*\n\n` +
+            `*/ad [item] [valor]*\n` +
+            `> Adiciona um gasto novo.\n` +
+            `> Ex: _/ad Pizza 50_\n\n` +
+            
+            `*/lista*\n` +
+            `> Mostra todos os seus gastos.\n\n` +
+            
+            `*/del [numero]*\n` +
+            `> Apaga um gasto específico (veja o nº na lista).\n` +
+            `> Ex: _/del 1_\n\n` +
+            
+            `*/del dia [dia/mes]*\n` +
+            `> Apaga tudo de um dia.\n` +
+            `> Ex: _/del dia 17/01_\n\n` +
+
+            `*/del mes [mes/ano]*\n` +
+            `> Apaga tudo de um mês.\n` +
+            `> Ex: _/del mes 01/2026_\n\n` +
+
+            `*/reset*\n` +
+            `> Apaga tudo e recomeça o cadastro.`;
+            
+        return sock.sendMessage(de, { text: msgAjuda });
+    }
+    //adicionando 
+    if (cmd.startsWith('/ad ')) {
+        const partes = txt.slice(4).trim().split(' ')
+        const valor = limparNumero(partes.pop())
+        const desc = partes.join(' ')
+        
+        if (!desc || valor <= 0) return sock.sendMessage(de, { text: "Use: /ad Pizza 50" })
+
+        const momento = dataHoraAtual(); 
+        const apenasData = momento.split(' ')[0] 
+
+        usuario.gastos.push({ 
+            momento: momento, 
+            dataRef: apenasData, 
+            desc, 
+            valor 
+        })
+        salvarBanco(db)
+        
+        return sock.sendMessage(de, { text: `✅ Anotado: *${desc}*\n\n*Valor*: R$ ${valor.toFixed(2)}\n${momento}` })
+    }
+    //lista
     if (cmd === '/lista') {
-        if (usuario.gastos.length === 0) return sock.sendMessage(de, { text: "Nenhum gasto anotado." });
+        if (usuario.gastos.length === 0) return sock.sendMessage(de, { text: "Nenhum gasto anotado." })
 
-        let relatorio = "*📝 SEUS GASTOS:*\n\n";
-        let total = 0;
+        const grupos = {}
         usuario.gastos.forEach(g => {
-            relatorio += `📅 ${g.data} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`;
-            total += g.valor;
-        });
-        relatorio += `\n💸 *TOTAL:* R$ ${total.toFixed(2)}`;
-        
-        await digitar(sock, de, 2);
-        return sock.sendMessage(de, { text: relatorio });
-    }
+            if (!grupos[g.dataRef]) grupos[g.dataRef] = []
+            grupos[g.dataRef].push(g)
+        })
 
+        let relatorio = "*SEUS GASTOS RECENTES:*\n"
+        let totalGeral = 0
+
+        for (const dia in grupos) {
+            relatorio += `\n*${dia}*\n`
+            grupos[dia].forEach(g => {
+                const hora = g.momento.split(' ')[1] || ''
+                const horaCurta = hora.trim();
+                const idReal = usuario.gastos.indexOf(g) + 1;
+
+                relatorio += `${idReal}.    ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
+                totalGeral += g.valor
+            })
+        }
+
+        relatorio += `\n*TOTAL GERAL: R$ ${totalGeral.toFixed(2)}*`
+        return sock.sendMessage(de, { text: relatorio })
+    }
+    //delete
+    if (cmd.startsWith('/del ')) {
+        const args = cmd.split(' ');
+        const tipo = args[1];
+
+        if (tipo === 'dia') {
+            let dataAlvo = args[2] ? args[2].trim() : null;
+            if (!dataAlvo) return sock.sendMessage(de, { text: "Use: /del dia 17/01" });
+            if (dataAlvo.split('/').length === 2) dataAlvo = `${dataAlvo}/${new Date().getFullYear()}`;
+
+            const antes = usuario.gastos.length;
+            usuario.gastos = usuario.gastos.filter(g => g.dataRef !== dataAlvo);
+            const apagados = antes - usuario.gastos.length;
+            
+            salvarBanco(db);
+            return sock.sendMessage(de, { text: `🗑️ Apagados ${apagados} itens do dia ${dataAlvo}.` });
+        }
+        else if (tipo === 'mes') {
+            const mesAlvo = args[2] ? args[2].trim() : null;
+            if (!mesAlvo) return sock.sendMessage(de, { text: "Use: /del mes 01/2026" });
+            const antes = usuario.gastos.length;
+            usuario.gastos = usuario.gastos.filter(g => !g.dataRef.includes(mesAlvo));
+            const apagados = antes - usuario.gastos.length;
+            salvarBanco(db);
+            return sock.sendMessage(de, { text: `🗑️ Apagados ${apagados} itens do mês ${mesAlvo}.` });
+        }
+        else {
+            const id = parseInt(tipo);
+            if (isNaN(id)) return sock.sendMessage(de, { text: "ID inválido. Use: /del 1 (ou /del dia 17/01)" });
+            const index = id - 1;
+            if (index >= 0 && index < usuario.gastos.length) {
+                const itemRemovido = usuario.gastos[index];
+                usuario.gastos.splice(index, 1);
+                salvarBanco(db);
+                return sock.sendMessage(de, { text: `🗑️ Item apagado: ${itemRemovido.desc} (R$ ${itemRemovido.valor})` });
+            } else {
+                return sock.sendMessage(de, { text: "⚠️ Item não encontrado." });
+            }
+        }
+    }
+    //so pra ficar mais facil de testar
     if (cmd === '/reset') {
-        delete db[de];
-        salvarBanco(db);
-        return sock.sendMessage(de, { text: "Dados apagados. Mande um 'oi' para recomeçar." });
+        delete db[de]
+        salvarBanco(db)
+        return sock.sendMessage(de, { text: "Reiniciado" })
     }
 
-    // --- IA COM DELAY ---
-    
-    await digitar(sock, de, 3); // IA demora 3 segundos fingindo pensar
+    if (usuario.etapa === 6) {
+        await digitar(sock, de, 2)
+        //prompt da ia pra ela ser um consultor financeiro 
+        const contexto = `
+            Aja como um consultor financeiro paciente e extremamente objetivo.
+            O nome do cliente é ${usuario.perfil.nome}, chame ele assim sempre.
+            
+            Dados financeiros: 
+            - Salario ${usuario.perfil.salario}
+            - Fixos ${usuario.perfil.fixos}
+            - Fúteis ${usuario.perfil.futeis}
+            - Guarda ${usuario.perfil.poupanca_atual}
+            
+            Usuario disse: "${txt}".
+            
+            Instruções:
+            1. Responda em no máximo uma frase curta.
+            2. Sem palestras.
+            3. Vá direto ao ponto mas sempre querendo ajudar o ${usuario.perfil.nome}.
+            4. Se o usuário parecer confuso ou perguntar sobre comandos, sugira usar /ajuda.
+        `
 
-    const contextoFinanceiro = `
-        Você é um consultor financeiro.
-        Dados do usuário:
-        - Salário: R$ ${usuario.perfil.salario}
-        - Fixos: R$ ${usuario.perfil.fixos}
-        - Guarda: R$ ${usuario.perfil.poupanca_atual}
-        
-        O usuário disse: "${txt}"
-        Responda de forma curta e ajude ele a bater a meta de 20% de economia.
-    `;
-
-    try {
-        const { data } = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(contextoFinanceiro)}`);
-        return sock.sendMessage(de, { text: `🤖 ${data}` });
-    } catch (e) {
-        return sock.sendMessage(de, { text: "A IA está descansando..." });
+        try {
+            const { data } = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(contexto)}`)
+            return sock.sendMessage(de, { text: `*Consultor*: ${data}` })
+        } catch (e) {
+            return 0 
+        }
     }
 }
 
 async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-  const { version } = await fetchLatestBaileysVersion();
+    const { state, saveCreds } = await useMultiFileAuthState(authFolder)
+    const { version } = await fetchLatestBaileysVersion()
 
-  const sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true,
-    browser: ["FinanceBot", "Chrome", "1.0"],
-    version,
-    logger: P({ level: "silent" })
-  });
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        logger: P({ level: "silent" })
+    })
 
-  sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", saveCreds)
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    sock.ev.on("connection.update", (update) => {
+        const { connection, lastDisconnect, qr } = update
+        if (qr) {
+            global.qrCodeSite = qr; 
+            qrcodeTerminal.generate(qr, { small: true })
+        }
+       
 
+        if (connection === "close") {
+            const reason = lastDisconnect?.error?.output?.statusCode
+            if (reason !== DisconnectReason.loggedOut) start()
+            else console.log("Fechado.")
+        } else if (connection === "open") {
+            
+            global.qrCodeSite = null;
+            console.log("\nBCONECTADO")
+        }
+    })
+        
+    
     if (qr) {
-        console.log("QR Code gerado");
-        qrCodeImagem = await qrcode.toDataURL(qr);
-    }
-
-    if (connection === "close") {
-      const reason = lastDisconnect?.error?.output?.statusCode;
-      if (reason !== DisconnectReason.loggedOut) start();
-    } else if (connection === "open") {
-      console.log("BOT CONECTADO 🚀");
-      qrCodeImagem = null;
-    }
-  });
-
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg.message || msg.key.fromMe) return;
-
-    const de = msg.key.remoteJid;
-    const txt = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-
-    if (!txt) return;
-
-    await tratarFinanceiro(sock, de, msg, txt);
-  });
+            qrcodeTerminal.generate(qr, { small: true })
+        }
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        const msg = messages[0]
+        if (!msg.message || msg.key.fromMe) return
+        const de = msg.key.remoteJid
+        const txt = msg.message.conversation || msg.message.extendedTextMessage?.text || ""
+        if (txt) await tratarFinanceiro(sock, de, msg, txt)
+    })
 }
 
-start();
+start()
