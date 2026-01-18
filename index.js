@@ -1,60 +1,54 @@
 import http from 'http'
-global.qrCodeSite = null;
-
-const PORT = process.env.PORT || 8080
-
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-
-    if (global.qrCodeSite) {
-        
-        const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(global.qrCodeSite)}`;
-        
-        const html = `
-            <html>
-                <head>
-                    <meta http-equiv="refresh" content="5">
-                    <title>Jamal Bot - Conectar</title>
-                    <style>
-                        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; flex-direction: column; }
-                        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
-                        h1 { color: #333; margin-bottom: 10px; }
-                        p { color: #666; }
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <h1>Bot Financeiro</h1>
-                        <p>Escaneie para conectar:</p>
-                        <img src="${qrImage}" alt="QR Code WhatsApp" />
-                        <p><small>Atualiza a cada 5 segundos...</small></p>
-                    </div>
-                </body>
-            </html>
-        `;
-        res.end(html);
-    } else {
-        res.end(`
-            <html>
-                <head><meta http-equiv="refresh" content="2"></head>
-                <body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh;">
-                    <h2> Aguardando geração do QR Code...<br>Ou o Bot já está conectado!</h2>
-                </body>
-            </html>
-        `);
-    }
-});
-
-server.listen(PORT, () => {
-    console.log(`\n Servidor HTTP com QR Code rodando na porta ${PORT}`);
-});
-
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import P from 'pino'
+
+global.qrCodeSite = null
+
+const PORT = process.env.PORT || 8080
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+
+    if (global.qrCodeSite) {
+        const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(global.qrCodeSite)}`
+        const html = `
+            <html>
+                <head>
+                    <meta http-equiv="refresh" content="5">
+                    <style>
+                        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; flex-direction: column; }
+                        div { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+                    </style>
+                </head>
+                <body>
+                    <div>
+                        <h1>Bot Financeiro</h1>
+                        <img src="${qrImage}" alt="QR Code" />
+                        <p>Atualiza a cada 5 segundos</p>
+                    </div>
+                </body>
+            </html>
+        `
+        res.end(html)
+    } else {
+        res.end(`
+            <html>
+                <head><meta http-equiv="refresh" content="2"></head>
+                <body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <h2>Aguardando QR Code ou Conectado</h2>
+                </body>
+            </html>
+        `)
+    }
+})
+
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`)
+})
 
 if (!globalThis.crypto) {
     globalThis.crypto = crypto.webcrypto
@@ -246,7 +240,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
         const sobraReal = salario - fixos - futeis - guardado 
         const meta = salario * 0.20
         const nome = usuario.perfil.nome
-        //tabela
+        
         const potencialTotal = guardado + sobraReal;
 
         const resumo = `*TABELA:*\n\n` +
@@ -287,7 +281,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
         await delay(1000)
         return sock.sendMessage(de, { text: `Pronto, ${nome}! \n\nUse */ajuda* para ver os comandos`})
     }
-    //menu 
+
     if (cmd === '/ajuda' || cmd === '/help') {
         const msgAjuda = `*COMANDOS*\n\n` +
             `*/ad [item] [valor]*\n` +
@@ -314,7 +308,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
             
         return sock.sendMessage(de, { text: msgAjuda });
     }
-    //adicionando 
+
     if (cmd.startsWith('/ad ')) {
         const partes = txt.slice(4).trim().split(' ')
         const valor = limparNumero(partes.pop())
@@ -335,7 +329,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
         
         return sock.sendMessage(de, { text: `✅ Anotado: *${desc}*\n\n*Valor*: R$ ${valor.toFixed(2)}\n${momento}` })
     }
-    //lista
+
     if (cmd === '/lista') {
         if (usuario.gastos.length === 0) return sock.sendMessage(de, { text: "Nenhum gasto anotado." })
 
@@ -355,7 +349,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
                 const horaCurta = hora.trim();
                 const idReal = usuario.gastos.indexOf(g) + 1;
 
-                relatorio += `${idReal}.    ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
+                relatorio += `${idReal}.    ${horaCurta} - ${g.desc}: R$ ${g.valor.toFixed(2)}\n`
                 totalGeral += g.valor
             })
         }
@@ -363,7 +357,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
         relatorio += `\n*TOTAL GERAL: R$ ${totalGeral.toFixed(2)}*`
         return sock.sendMessage(de, { text: relatorio })
     }
-    //delete
+
     if (cmd.startsWith('/del ')) {
         const args = cmd.split(' ');
         const tipo = args[1];
@@ -403,7 +397,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
             }
         }
     }
-    //so pra ficar mais facil de testar
+
     if (cmd === '/reset') {
         delete db[de]
         salvarBanco(db)
@@ -412,7 +406,7 @@ async function tratarFinanceiro(sock, de, msg, txt) {
 
     if (usuario.etapa === 6) {
         await digitar(sock, de, 2)
-        //prompt da ia pra ela ser um consultor financeiro 
+
         const contexto = `
             Aja como um consultor financeiro paciente e extremamente objetivo.
             O nome do cliente é ${usuario.perfil.nome}, chame ele assim sempre.
@@ -455,27 +449,22 @@ async function start() {
 
     sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect, qr } = update
+        
         if (qr) {
-            global.qrCodeSite = qr; 
+            global.qrCodeSite = qr
             qrcodeTerminal.generate(qr, { small: true })
         }
-       
 
         if (connection === "close") {
             const reason = lastDisconnect?.error?.output?.statusCode
             if (reason !== DisconnectReason.loggedOut) start()
             else console.log("Fechado.")
         } else if (connection === "open") {
-            
-            global.qrCodeSite = null;
+            global.qrCodeSite = null
             console.log("\nBCONECTADO")
         }
     })
-        
-    
-    if (qr) {
-            qrcodeTerminal.generate(qr, { small: true })
-        }
+
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const msg = messages[0]
         if (!msg.message || msg.key.fromMe) return
