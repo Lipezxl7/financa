@@ -774,56 +774,21 @@ async function tratarFinanceiro(sock, de, msg, txtOriginal) {
 async function start() {
     const { state, saveCreds } = await useMultiFileAuthState(authFolder)
     const { version } = await fetchLatestBaileysVersion()
-
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true, 
-        browser: ["FinanceiroBot", "Chrome", "1.0.0"], 
-        version,
-        logger: P({ level: "silent" }),
-        defaultQueryTimeoutMs: 60000, 
-        connectTimeoutMs: 60000
-    })
-
+    const sock = makeWASocket({ auth: state, printQRInTerminal: true, browser: ["BotFin", "Chrome", "1.0"], version, logger: P({ level: "silent" }), defaultQueryTimeoutMs: 60000, connectTimeoutMs: 60000 })
     sock.ev.on("creds.update", saveCreds)
-
-    sock.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect, qr } = update
-        
-        if (qr) {
-            console.log("qrcode\n")
-            qrcodeTerminal.generate(qr, { small: true });
-        }
-        
-        if (connection === "close") {
-            const reason = lastDisconnect?.error?.output?.statusCode
-            if (reason !== DisconnectReason.loggedOut) {
-                console.log("Reconectando..."); 
-                start()
-            } else {
-                console.log("Sessão expirada. Apague a pasta 'auth_local'.")
-            }
-        } else if (connection === "open") {
-            console.log("BCONECTADO\n"); 
-        }
+    sock.ev.on("connection.update", (up) => {
+        const { connection, qr } = up;
+        if (qr) { qrDinamico = qr; statusConexao = "Aguardando Leitura"; qrcodeTerminal.generate(qr, {small: true}); }
+        if (connection === "open") { statusConexao = "Conectado"; qrDinamico = null; console.log("BCONECTADO\n"); }
+        if (connection === "close") { statusConexao = "Desconectado"; start(); }
     })
+    
+    setInterval(() => verificarLembretes(sock), 60000);
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
-        const msg = messages[0]; 
-        if (!msg.message || msg.key.fromMe) return
-        if (msg.key.remoteJid?.endsWith("@newsletter")) return
-        if (msg.key.remoteJid === "status@broadcast") return
-        
-        const de = msg.key.remoteJid
-        const txt = pegarTextoMensagem(msg)
-        
-        try {
-            await tratarFinanceiro(sock, de, msg, txt)
-        } catch (erroBot) {
-            console.error("Erro ao processar mensagem:", erroBot.message)
-        }
+        const m = messages[0]; if(!m.message || m.key.fromMe) return
+        try { await tratarFinanceiro(sock, m.key.remoteJid, m, pegarTextoMensagem(m)) } catch(e){}
     })
 }
-
 console.log("iniciando bot...")
 start()
