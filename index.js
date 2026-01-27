@@ -782,8 +782,6 @@ async function start() {
         if (connection === "open") { statusConexao = "Conectado"; qrDinamico = null; console.log("BCONECTADO\n"); }
         if (connection === "close") { statusConexao = "Desconectado"; start(); }
     })
-    
-    setInterval(() => verificarLembretes(sock), 60000);
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
         const m = messages[0]; if(!m.message || m.key.fromMe) return
