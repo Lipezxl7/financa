@@ -1,0 +1,15 @@
+{
+  "235952618385475@lid": {
+    "etapa": 5,
+    "modo_consultor": false,
+    "historico_consultor": [],
+    "perfil": {
+      "nome": "Admin",
+      "salario": 10000,
+      "fixos": 2000,
+      "investe": 1000
+    },
+    "gastos": [],
+    "ultimoMesRelatorio": "01/2026"
+  }
+}
